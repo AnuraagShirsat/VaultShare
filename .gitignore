@@ -1,0 +1,9 @@
+
+# VaultShare
+.env
+instance/
+*.db
+storage/*
+!storage/.gitkeep
+venv/
+.venv/
