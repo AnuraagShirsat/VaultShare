@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - VaultShare{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-sm border-0">
+                <div class="card-body p-4 p-md-5">
+                    <div class="d-flex align-items-center mb-3">
+                        <i class="bi bi-person-circle fs-1 text-primary me-3"></i>
+                        <div>
+                            <h2 class="card-title fw-bold mb-0">Welcome, {{ current_user.username }}</h2>
+                            <span class="text-muted small">{{ current_user.email }}</span>
+                        </div>
+                    </div>
+                    <hr>
+                    <p class="card-text text-secondary">
+                        Your VaultShare account is active, and your RSA keypair is loaded and ready for secure document distribution.
+                    </p>
+                    <div class="alert alert-success d-flex align-items-center mt-4 mb-0" role="alert">
+                        <i class="bi bi-shield-lock-fill fs-4 me-3"></i>
+                        <div>
+                            <strong>Vault Unlocked:</strong> Your private key is decrypted in secure server-side session memory.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

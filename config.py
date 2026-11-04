@@ -1,5 +1,6 @@
 """Configuration settings for VaultShare application."""
 
+from datetime import timedelta
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -18,6 +19,16 @@ class Config:
     SECRET_KEY = os.environ.get(
         "SECRET_KEY", "dev-insecure-secret-key-change-in-production"
     )
+
+    # Session security settings
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    PERMANENT_SESSION_LIFETIME = timedelta(minutes=30)
+    SESSION_COOKIE_SECURE = (
+        os.environ.get("SESSION_COOKIE_SECURE", "False").lower() in ("true", "1")
+    )
+    REMEMBER_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_SAMESITE = "Lax"
 
     # Database configuration (default to SQLite in instance/ directory)
     DATABASE_URI = os.environ.get(

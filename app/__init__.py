@@ -131,4 +131,11 @@ def create_app(config_class=None, test_config=None):
     app.register_blueprint(documents_bp)
     app.register_blueprint(audit_bp)
 
+    @app.errorhandler(429)
+    def ratelimit_handler(e):
+        from flask import flash, render_template
+        from app.forms import LoginForm
+        flash("Too many login attempts. Please try again in a minute.", "danger")
+        return render_template("auth/login.html", form=LoginForm()), 429
+
     return app
