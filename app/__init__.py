@@ -138,4 +138,14 @@ def create_app(config_class=None, test_config=None):
         flash("Too many login attempts. Please try again in a minute.", "danger")
         return render_template("auth/login.html", form=LoginForm()), 429
 
+    @app.errorhandler(413)
+    def file_too_large(e):
+        from flask import render_template
+        return render_template("errors/413.html"), 413
+
+    @app.errorhandler(500)
+    def internal_server_error(e):
+        from flask import render_template
+        return render_template("errors/500.html"), 500
+
     return app

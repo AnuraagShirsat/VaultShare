@@ -42,6 +42,14 @@ class Config:
     MAX_CONTENT_LENGTH = int(
         os.environ.get("MAX_CONTENT_LENGTH", 16 * 1024 * 1024)
     )
+    ALLOWED_EXTENSIONS = set(
+        ext.strip().lower()
+        for ext in os.environ.get(
+            "ALLOWED_EXTENSIONS",
+            "pdf,txt,docx,xlsx,pptx,png,jpg,jpeg,csv,md,zip",
+        ).split(",")
+        if ext.strip()
+    )
 
     # Rate limiting
     RATELIMIT_DEFAULT = os.environ.get(

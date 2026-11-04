@@ -1,6 +1,7 @@
 """Flask-WTF forms for VaultShare authentication and operations."""
 
 from flask_wtf import FlaskForm
+from flask_wtf.file import FileField
 from wtforms import PasswordField, StringField, SubmitField
 from wtforms.validators import (
     DataRequired,
@@ -96,3 +97,13 @@ class LoginForm(FlaskForm):
         validators=[DataRequired(message="Password is required.")],
     )
     submit = SubmitField("Log In")
+
+
+class DocumentUploadForm(FlaskForm):
+    """Document upload form."""
+
+    document = FileField(
+        "Choose File",
+        validators=[DataRequired(message="Please select a file to upload.")],
+    )
+    submit = SubmitField("Upload and Encrypt")

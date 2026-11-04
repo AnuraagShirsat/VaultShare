@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}My Documents - VaultShare{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="fw-bold mb-1">My Documents</h2>
+            <p class="text-muted small mb-0">Documents encrypted at rest with AES-256-GCM.</p>
+        </div>
+        <a href="{{ url_for('documents.upload') }}" class="btn btn-primary">
+            <i class="bi bi-cloud-arrow-up-fill me-1"></i> Upload Document
+        </a>
+    </div>
+
+    {% if documents %}
+        <div class="card shadow-sm border-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th scope="col" class="ps-4">Original Filename</th>
+                            <th scope="col">Size</th>
+                            <th scope="col">Uploaded At (UTC)</th>
+                            <th scope="col">Ciphertext Digest</th>
+                            <th scope="col" class="text-end pe-4">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for doc in documents %}
+                            <tr>
+                                <td class="ps-4 fw-semibold text-dark">
+                                    <i class="bi bi-file-earmark-lock2-fill text-primary me-2"></i>{{ doc.original_filename }}
+                                </td>
+                                <td class="text-secondary small">{{ doc.size_bytes|filesize }}</td>
+                                <td class="text-secondary small">{{ doc.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+                                <td>
+                                    <code class="small text-muted" title="{{ doc.ciphertext_sha256 }}">
+                                        {{ doc.ciphertext_sha256[:12] }}...
+                                    </code>
+                                </td>
+                                <td class="text-end pe-4">
+                                    <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                        <i class="bi bi-shield-check me-1"></i>Encrypted
+                                    </span>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% else %}
+        <div class="card shadow-sm border-0 text-center py-5">
+            <div class="card-body py-5">
+                <i class="bi bi-folder-x text-muted display-3 mb-3"></i>
+                <h4 class="fw-bold">No documents uploaded yet</h4>
+                <p class="text-muted small mb-4">You haven't uploaded any documents. Start by uploading and encrypting your first file.</p>
+                <a href="{{ url_for('documents.upload') }}" class="btn btn-primary px-4">
+                    <i class="bi bi-cloud-arrow-up-fill me-1"></i> Upload Your First Document
+                </a>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
