@@ -18,6 +18,7 @@ def log_event(
     document_id: Optional[int] = None,
     target_user_id: Optional[int] = None,
     details: Optional[Union[dict, str]] = None,
+    commit: bool = True,
 ) -> AuditLog:
     """Record an action into the tamper-evident audit log.
 
@@ -27,6 +28,7 @@ def log_event(
         document_id: Optional document ID.
         target_user_id: Optional recipient or target user ID.
         details: Optional dictionary or string of event context.
+        commit: Whether to commit the transaction immediately (default True).
 
     Returns:
         AuditLog: The persisted audit log instance.
@@ -69,5 +71,8 @@ def log_event(
     )
 
     db.session.add(audit_entry)
-    db.session.commit()
+    if commit:
+        db.session.commit()
+    else:
+        db.session.flush()
     return audit_entry

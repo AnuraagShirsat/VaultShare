@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Access - {{ doc.original_filename }}{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <!-- Breadcrumb & Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-1">
+                    <li class="breadcrumb-item"><a href="{{ url_for('documents.index') }}">My Documents</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">Manage Access</li>
+                </ol>
+            </nav>
+            <h2 class="fw-bold mb-0">
+                <i class="bi bi-file-earmark-lock2-fill text-primary me-2"></i>{{ doc.original_filename }}
+            </h2>
+        </div>
+        <a href="{{ url_for('documents.index') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left me-1"></i> Back to Documents
+        </a>
+    </div>
+
+    <!-- Document Info Card -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body p-4">
+            <div class="row g-3">
+                <div class="col-sm-6 col-md-3">
+                    <span class="text-muted small d-block">Original Size</span>
+                    <strong class="fs-6">{{ doc.size_bytes|filesize }}</strong>
+                </div>
+                <div class="col-sm-6 col-md-3">
+                    <span class="text-muted small d-block">Uploaded (UTC)</span>
+                    <strong class="fs-6">{{ doc.created_at.strftime('%Y-%m-%d %H:%M') }}</strong>
+                </div>
+                <div class="col-sm-6 col-md-3">
+                    <span class="text-muted small d-block">MIME Type</span>
+                    <span class="badge bg-secondary-subtle text-secondary">{{ doc.mime_type }}</span>
+                </div>
+                <div class="col-sm-6 col-md-3">
+                    <span class="text-muted small d-block">Ciphertext SHA-256</span>
+                    <code class="small text-truncate d-block" title="{{ doc.ciphertext_sha256 }}">{{ doc.ciphertext_sha256[:16] }}...</code>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Access List -->
+        <div class="col-lg-8">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white py-3 border-bottom">
+                    <h5 class="fw-bold mb-0">Authorized Recipients ({{ keys|length }})</h5>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col" class="ps-4">User</th>
+                                <th scope="col">Role</th>
+                                <th scope="col">Granted (UTC)</th>
+                                <th scope="col">Decrypts</th>
+                                <th scope="col">Last Decrypted</th>
+                                <th scope="col" class="text-end pe-4">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for key in keys %}
+                                <tr>
+                                    <td class="ps-4 fw-semibold">
+                                        <i class="bi bi-person-fill text-muted me-1"></i>{{ key.recipient.username }}
+                                        {% if key.recipient_id == current_user.id %}
+                                            <span class="badge bg-primary-subtle text-primary ms-1">You</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if key.recipient_id == doc.owner_id %}
+                                            <span class="badge bg-dark">Owner</span>
+                                        {% else %}
+                                            <span class="badge bg-info-subtle text-info-emphasis">Recipient</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-muted small">{{ key.granted_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                    <td class="small">{{ key.decrypt_count }}</td>
+                                    <td class="text-muted small">
+                                        {{ key.last_decrypted_at.strftime('%Y-%m-%d %H:%M') if key.last_decrypted_at else 'Never' }}
+                                    </td>
+                                    <td class="text-end pe-4">
+                                        {% if key.recipient_id != doc.owner_id %}
+                                            <form action="{{ url_for('documents.revoke', doc_id=doc.id, user_id=key.recipient_id) }}" method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to revoke access for {{ key.recipient.username }}?');">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <button type="submit" class="btn btn-outline-danger btn-sm">
+                                                    <i class="bi bi-person-x-fill me-1"></i>Revoke
+                                                </button>
+                                            </form>
+                                        {% else %}
+                                            <span class="text-muted small fst-italic">Owner</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Honest Limitation Notice -->
+            <div class="alert alert-warning small mt-4 d-flex align-items-start" role="alert">
+                <i class="bi bi-exclamation-triangle-fill fs-5 me-2 flex-shrink-0 text-warning"></i>
+                <div>
+                    <strong>Note on Access Revocation:</strong> Revoking access deletes the user's RSA-wrapped key from the database, preventing any future key unwrapping or file decryption through VaultShare. However, it cannot retroactively un-share or delete plaintext copies the user may have previously downloaded to their local machine.
+                </div>
+            </div>
+        </div>
+
+        <!-- Share Form Card -->
+        <div class="col-lg-4">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white py-3 border-bottom">
+                    <h5 class="fw-bold mb-0">Grant Access</h5>
+                </div>
+                <div class="card-body p-4">
+                    <form method="POST" action="{{ url_for('documents.share', doc_id=doc.id) }}" novalidate>
+                        {{ form.csrf_token }}
+
+                        <div class="mb-3">
+                            {{ form.recipients.label(class="form-label fw-semibold small") }}
+                            {{ form.recipients(class="form-control" + (" is-invalid" if form.recipients.errors else ""), placeholder="alice, bob@example.com", id="recipientsInput") }}
+                            {% for error in form.recipients.errors %}
+                                <div class="invalid-feedback d-block">{{ error }}</div>
+                            {% endfor %}
+                            <div class="form-text small text-muted">Separate multiple usernames or emails with commas.</div>
+                        </div>
+
+                        {% if other_users %}
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold small text-muted">Quick Add Registered User</label>
+                                <select class="form-select form-select-sm" id="userQuickSelect" onchange="addSelectedUser(this)">
+                                    <option value="" selected>-- Select a user --</option>
+                                    {% for u in other_users %}
+                                        <option value="{{ u.username }}">{{ u.username }} ({{ u.email }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        {% endif %}
+
+                        <div class="d-grid mt-4">
+                            {{ form.submit(class="btn btn-primary fw-semibold") }}
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function addSelectedUser(select) {
+    const val = select.value;
+    if (!val) return;
+    const input = document.getElementById('recipientsInput');
+    const current = input.value.trim();
+    if (!current) {
+        input.value = val;
+    } else {
+        const parts = current.split(',').map(s => s.trim()).filter(Boolean);
+        if (!parts.includes(val)) {
+            parts.push(val);
+            input.value = parts.join(', ');
+        }
+    }
+    select.value = '';
+}
+</script>
+{% endblock %}

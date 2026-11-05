@@ -1,12 +1,18 @@
 """Document management routes and handlers for VaultShare.
 
-Handles document upload, AES-256-GCM encryption at rest, owner key wrapping,
-and document listing.
+Handles document upload, AES-256-GCM encryption at rest, multi-recipient key
+distribution via RSA-OAEP, access control, and revocation.
+
+NOTE ON ACCESS REVOCATION LIMITATIONS:
+Revocation deletes the recipient's wrapped DocumentKey row from the database,
+preventing any future key unwrapping or file decryption through VaultShare.
+However, it cannot retroactively purge or un-share copies the user previously
+downloaded to their local device.
 """
 
 from pathlib import Path
 import secrets
-from typing import Optional
+from typing import List, Optional
 from flask import (
     Blueprint,
     current_app,
@@ -14,20 +20,24 @@ from flask import (
     redirect,
     render_template,
     request,
+    session,
     url_for,
 )
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
-from app import db
+from app import db, limiter
+from app.access import get_document_or_404, require_owner, require_recipient
 from app.audit import log_event
 from app.crypto import (
     encrypt_bytes,
     generate_document_key,
     sha256_hex,
+    unwrap_key,
     wrap_key,
 )
-from app.forms import DocumentUploadForm
+from app.forms import DocumentUploadForm, ShareDocumentForm
+from app.keycache import get_key
 from app.models import Document, DocumentKey, User
 
 bp = Blueprint("documents", __name__, url_prefix="/documents")
@@ -150,6 +160,7 @@ def store_encrypted_document(
                 "size_bytes": doc.size_bytes,
                 "mime_type": doc.mime_type,
             },
+            commit=False,
         )
         db.session.commit()
     except Exception:
@@ -164,12 +175,178 @@ def store_encrypted_document(
     return doc
 
 
+def share_document(
+    owner: User,
+    doc: Document,
+    recipient_identifiers: List[str],
+    owner_private_key: object,
+    max_recipients: int = 20,
+) -> dict:
+    """Share a document with multiple recipients by wrapping the document key.
+
+    All new recipient keys are created in a single transaction.
+
+    Args:
+        owner: User instance who owns the document.
+        doc: Document instance to share.
+        recipient_identifiers: List of recipient usernames or email addresses.
+        owner_private_key: Decrypted RSA private key of the owner.
+        max_recipients: Maximum recipients allowed per request (default: 20).
+
+    Returns:
+        dict: Summary containing lists for 'shared', 'skipped_existing',
+              'skipped_self', and 'skipped_not_found'.
+
+    Raises:
+        ValueError: If recipient count exceeds limit or owner key cannot be unwrapped.
+    """
+    if len(recipient_identifiers) > max_recipients:
+        raise ValueError(
+            f"Cannot share with more than {max_recipients} recipients per request."
+        )
+
+    # 1. Fetch owner's DocumentKey
+    owner_key_row = db.session.execute(
+        db.select(DocumentKey).filter_by(
+            document_id=doc.id,
+            recipient_id=owner.id,
+        )
+    ).scalar_one_or_none()
+
+    if not owner_key_row:
+        raise ValueError("Owner key record not found for this document.")
+
+    # 2. Unwrap the symmetric document key using owner's private key
+    raw_doc_key = unwrap_key(owner_private_key, owner_key_row.wrapped_key)
+
+    shared = []
+    skipped_existing = []
+    skipped_self = []
+    skipped_not_found = []
+
+    try:
+        seen = set()
+        for raw_id in recipient_identifiers:
+            identifier = raw_id.strip()
+            if not identifier:
+                continue
+
+            norm_id = identifier.lower()
+            if norm_id in seen:
+                continue
+            seen.add(norm_id)
+
+            recipient = db.session.execute(
+                db.select(User).filter(
+                    (User.username == identifier)
+                    | (User.email == identifier.lower())
+                )
+            ).scalar_one_or_none()
+
+            if recipient is None:
+                skipped_not_found.append(identifier)
+                continue
+
+            if recipient.id == owner.id:
+                skipped_self.append(recipient.username)
+                continue
+
+            existing_key = db.session.execute(
+                db.select(DocumentKey).filter_by(
+                    document_id=doc.id,
+                    recipient_id=recipient.id,
+                )
+            ).scalar_one_or_none()
+
+            if existing_key is not None:
+                skipped_existing.append(recipient.username)
+                continue
+
+            # Wrap document key for the recipient
+            wrapped_for_recipient = wrap_key(
+                recipient.public_key_pem, raw_doc_key
+            )
+
+            new_key = DocumentKey(
+                document_id=doc.id,
+                recipient_id=recipient.id,
+                wrapped_key=wrapped_for_recipient,
+                granted_by_id=owner.id,
+            )
+            db.session.add(new_key)
+
+            log_event(
+                action="SHARE",
+                actor=owner,
+                document_id=doc.id,
+                target_user_id=recipient.id,
+                details={"recipient_username": recipient.username},
+                commit=False,
+            )
+            shared.append(recipient.username)
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    finally:
+        del raw_doc_key
+
+    return {
+        "shared": shared,
+        "skipped_existing": skipped_existing,
+        "skipped_self": skipped_self,
+        "skipped_not_found": skipped_not_found,
+    }
+
+
+def revoke_document_access(
+    owner: User, doc: Document, target_user_id: int
+) -> bool:
+    """Revoke a user's access to a document by deleting their DocumentKey record.
+
+    Args:
+        owner: User instance who owns the document.
+        doc: Document instance.
+        target_user_id: User ID whose access should be revoked.
+
+    Returns:
+        bool: True if key was revoked, False if user had no access.
+
+    Raises:
+        ValueError: If owner attempts to revoke their own access.
+    """
+    if target_user_id == owner.id:
+        raise ValueError("Cannot revoke the document owner's access.")
+
+    key_row = db.session.execute(
+        db.select(DocumentKey).filter_by(
+            document_id=doc.id,
+            recipient_id=target_user_id,
+        )
+    ).scalar_one_or_none()
+
+    if key_row is None:
+        return False
+
+    db.session.delete(key_row)
+    log_event(
+        action="REVOKE",
+        actor=owner,
+        document_id=doc.id,
+        target_user_id=target_user_id,
+    )
+    db.session.commit()
+    return True
+
+
 @bp.route("", methods=["GET"])
 @bp.route("/", methods=["GET"])
 @login_required
 def index():
-    """List all documents owned by the current user."""
-    documents = (
+    """List documents owned by the user and documents shared with the user."""
+    # Owned documents
+    owned_documents = (
         db.session.execute(
             db.select(Document)
             .filter_by(owner_id=current_user.id)
@@ -178,7 +355,27 @@ def index():
         .scalars()
         .all()
     )
-    return render_template("documents/index.html", documents=documents)
+
+    # Documents shared with current user
+    shared_keys = (
+        db.session.execute(
+            db.select(DocumentKey)
+            .join(Document, DocumentKey.document_id == Document.id)
+            .filter(
+                DocumentKey.recipient_id == current_user.id,
+                Document.owner_id != current_user.id,
+            )
+            .order_by(DocumentKey.granted_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+
+    return render_template(
+        "documents/index.html",
+        owned_documents=owned_documents,
+        shared_keys=shared_keys,
+    )
 
 
 @bp.route("/upload", methods=["GET", "POST"])
@@ -228,3 +425,138 @@ def upload():
         return redirect(url_for("documents.index"))
 
     return render_template("documents/upload.html", form=form)
+
+
+@bp.route("/<int:doc_id>/manage", methods=["GET"])
+@login_required
+def manage(doc_id: int):
+    """View access list and manage recipients for an owned document."""
+    doc = get_document_or_404(doc_id)
+    require_owner(doc, action="MANAGE")
+
+    form = ShareDocumentForm()
+
+    # Query all active key rows for this document
+    keys = (
+        db.session.execute(
+            db.select(DocumentKey)
+            .filter_by(document_id=doc.id)
+            .order_by(DocumentKey.granted_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+
+    # Query other users for recipient selection
+    other_users = (
+        db.session.execute(
+            db.select(User)
+            .filter(User.id != current_user.id)
+            .order_by(User.username.asc())
+        )
+        .scalars()
+        .all()
+    )
+
+    return render_template(
+        "documents/manage.html",
+        doc=doc,
+        keys=keys,
+        form=form,
+        other_users=other_users,
+    )
+
+
+@bp.route("/<int:doc_id>/share", methods=["POST"])
+@login_required
+@limiter.limit("30 per minute")
+def share(doc_id: int):
+    """Share document with specified recipients."""
+    doc = get_document_or_404(doc_id)
+    require_owner(doc, action="SHARE")
+
+    form = ShareDocumentForm()
+    if form.validate_on_submit():
+        raw_recipients = form.recipients.data or ""
+        recipients_list = [
+            r.strip()
+            for r in raw_recipients.replace(";", ",").split(",")
+            if r.strip()
+        ]
+
+        token = session.get("key_token")
+        owner_priv_key = get_key(token, current_user.id)
+        if owner_priv_key is None:
+            flash(
+                "Your session key has expired. Please log in again to share documents.",
+                "warning",
+            )
+            return redirect(url_for("auth.login", next=request.path))
+
+        try:
+            summary = share_document(
+                owner=current_user._get_current_object(),
+                doc=doc,
+                recipient_identifiers=recipients_list,
+                owner_private_key=owner_priv_key,
+            )
+
+            parts = []
+            if summary["shared"]:
+                parts.append(f"Shared with: {', '.join(summary['shared'])}.")
+            skipped_msgs = []
+            if summary["skipped_existing"]:
+                skipped_msgs.append(
+                    f"{', '.join(summary['skipped_existing'])} (already has access)"
+                )
+            if summary["skipped_self"]:
+                skipped_msgs.append(
+                    f"{', '.join(summary['skipped_self'])} (cannot share with self)"
+                )
+            if summary["skipped_not_found"]:
+                skipped_msgs.append(
+                    f"{', '.join(summary['skipped_not_found'])} (user not found)"
+                )
+
+            if skipped_msgs:
+                parts.append(f"Skipped: {'; '.join(skipped_msgs)}.")
+
+            msg = " ".join(parts) if parts else "No recipients processed."
+            category = "success" if summary["shared"] else "info"
+            flash(msg, category)
+        except ValueError as err:
+            flash(str(err), "danger")
+        except Exception:
+            flash("An error occurred while sharing the document.", "danger")
+
+        return redirect(url_for("documents.manage", doc_id=doc.id))
+
+    flash("Please specify valid recipients.", "warning")
+    return redirect(url_for("documents.manage", doc_id=doc.id))
+
+
+@bp.route("/<int:doc_id>/revoke/<int:user_id>", methods=["POST"])
+@login_required
+def revoke(doc_id: int, user_id: int):
+    """Revoke a user's access to an owned document."""
+    doc = get_document_or_404(doc_id)
+    require_owner(doc, action="REVOKE")
+
+    if user_id == current_user.id:
+        flash("You cannot revoke your own access as the document owner.", "warning")
+        return redirect(url_for("documents.manage", doc_id=doc.id))
+
+    try:
+        revoked = revoke_document_access(
+            owner=current_user._get_current_object(),
+            doc=doc,
+            target_user_id=user_id,
+        )
+        if revoked:
+            flash("Access has been successfully revoked.", "success")
+        else:
+            flash("User does not have access to this document.", "info")
+    except ValueError as err:
+        flash(str(err), "warning")
+
+    return redirect(url_for("documents.manage", doc_id=doc.id))

@@ -107,3 +107,15 @@ class DocumentUploadForm(FlaskForm):
         validators=[DataRequired(message="Please select a file to upload.")],
     )
     submit = SubmitField("Upload and Encrypt")
+
+
+class ShareDocumentForm(FlaskForm):
+    """Form to grant document access to recipients."""
+
+    recipients = StringField(
+        "Recipients (usernames or emails, comma-separated)",
+        validators=[
+            DataRequired(message="Please enter at least one recipient.")
+        ],
+    )
+    submit = SubmitField("Share Document")
