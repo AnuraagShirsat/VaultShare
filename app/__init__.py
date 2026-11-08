@@ -141,11 +141,13 @@ def create_app(config_class=None, test_config=None):
     from app.auth import bp as auth_bp
     from app.documents import bp as documents_bp
     from app.audit import bp as audit_bp
+    from app.integrity import bp as integrity_bp
 
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(documents_bp)
     app.register_blueprint(audit_bp)
+    app.register_blueprint(integrity_bp)
 
     @app.errorhandler(429)
     def ratelimit_handler(e):
