@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from flask_login import UserMixin
 from sqlalchemy import (
+    DDL,
     DateTime,
     ForeignKey,
     Integer,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     types,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -210,7 +212,7 @@ class AuditLog(db.Model):
     details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
 
-    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    prev_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     entry_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
 
     actor: Mapped[Optional["User"]] = relationship("User", foreign_keys=[actor_id])
@@ -220,3 +222,28 @@ class AuditLog(db.Model):
             f"<AuditLog id={self.id} action='{self.action}' "
             f"actor='{self.actor_username}'>"
         )
+
+
+# Immutability triggers on the audit_logs table to prevent UPDATE or DELETE
+_audit_logs_no_update_ddl = DDL(
+    """
+    CREATE TRIGGER IF NOT EXISTS audit_logs_no_update
+    BEFORE UPDATE ON audit_logs
+    BEGIN
+        SELECT RAISE(ABORT, 'audit log is immutable: updates are not allowed');
+    END;
+    """
+)
+
+_audit_logs_no_delete_ddl = DDL(
+    """
+    CREATE TRIGGER IF NOT EXISTS audit_logs_no_delete
+    BEFORE DELETE ON audit_logs
+    BEGIN
+        SELECT RAISE(ABORT, 'audit log is immutable: deletes are not allowed');
+    END;
+    """
+)
+
+event.listen(AuditLog.__table__, "after_create", _audit_logs_no_update_ddl)
+event.listen(AuditLog.__table__, "after_create", _audit_logs_no_delete_ddl)

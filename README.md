@@ -19,6 +19,10 @@ VaultShare is a secure document distribution web application built with Python, 
   Revoking recipient access deletes the recipient's RSA-wrapped key (`DocumentKey` record) from the database, preventing any future key unwrapping or server-side document decryption through VaultShare.
   *Known limitation*: Revocation takes effect immediately for all subsequent VaultShare operations, but it cannot retroactively un-share, recall, or delete copies of documents that a recipient previously downloaded to their local machine.
 
+- **Tamper-Proof Hash-Chained Audit Log**:
+  Every sensitive action is written to `audit_logs` where each record's `entry_hash` cryptographically chains to the previous record's `entry_hash` (starting with `0` * 64 at genesis). SQLite triggers prevent `UPDATE` and `DELETE` at the database level.
+  *Known limitation*: Deleting the most recent entries from the tail of the log (tail truncation) cannot be detected from the internal hash chain alone, as the remaining prefix remains internally consistent. Full protection against tail truncation requires periodic anchoring of the latest head hash to an external witness or timestamping service.
+
 ---
 
 ## Tech Stack
@@ -48,4 +52,16 @@ Access the application at [http://127.0.0.1:5000](http://127.0.0.1:5000).
 ### 3. Run the Test Suite
 ```powershell
 .\venv\Scripts\pytest -v
+```
+
+### 4. Verify Audit Log Hash Chain
+```powershell
+.\venv\Scripts\flask --app wsgi verify-audit
+```
+
+### 5. Audit Log Tampering Demonstration
+To simulate an attacker attempting to tamper with audit records directly on disk:
+```powershell
+.\venv\Scripts\python scripts/tamper_audit_demo.py instance/vaultshare.db 1
+.\venv\Scripts\flask --app wsgi verify-audit
 ```

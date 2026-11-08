@@ -68,6 +68,22 @@ def register_commands(app: Flask):
         db.create_all()
         click.echo("Initialized the database.")
 
+    @app.cli.command("verify-audit")
+    def verify_audit_command():
+        """Verify the cryptographic integrity of the audit log hash chain."""
+        import sys
+        from app.audit import verify_chain
+
+        result = verify_chain()
+        if result["ok"]:
+            click.echo(f"AUDIT LOG OK ({result['checked']} entries verified)")
+            sys.exit(0)
+        else:
+            bad_id = result.get("first_bad_id")
+            reason = result.get("reason")
+            click.echo(f"TAMPERING DETECTED at entry {bad_id}: {reason}")
+            sys.exit(1)
+
 
 def create_app(config_class=None, test_config=None):
     """Application factory for VaultShare.
