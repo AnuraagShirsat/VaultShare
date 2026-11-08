@@ -14,7 +14,11 @@
                     A secure document distribution system with encrypted storage, multi-recipient key distribution, and immutable audit logging.
                 </p>
                 <div class="d-flex justify-content-center gap-3">
-                    <a href="#" class="btn btn-primary btn-lg px-4">Get Started</a>
+                    {% if current_user.is_authenticated %}
+                    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary btn-lg px-4">Get Started</a>
+                    {% else %}
+                    <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-lg px-4">Get Started</a>
+                    {% endif %}
                     <a href="#" class="btn btn-outline-secondary btn-lg px-4">Documentation</a>
                 </div>
             </div>

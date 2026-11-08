@@ -625,11 +625,23 @@ def test_grep_templates_have_no_unsafe_constructs():
         re.compile(r'<\s*script(?![^>]*\bsrc=)[^>]*>', re.IGNORECASE),
     ]
 
+    # Buttons carrying a primary action role (btn-primary class) must never use
+    # href="#" as a dead-end placeholder — they must route to a real endpoint.
+    primary_dead_href = re.compile(
+        r'href=["\']#["\'][^>]*class=["\'][^"\']*btn-primary[^"\']*["\']'
+        r'|class=["\'][^"\']*btn-primary[^"\']*["\'][^>]*href=["\']#["\']',
+        re.IGNORECASE,
+    )
+
     for html_file in template_dir.rglob("*.html"):
         content = html_file.read_text(encoding="utf-8")
         for pattern in forbidden_patterns:
             matches = pattern.findall(content)
             assert not matches, f"Forbidden construct {pattern.pattern} found in {html_file.name}: {matches}"
+        dead_matches = primary_dead_href.findall(content)
+        assert not dead_matches, (
+            f"btn-primary element with href='#' (dead link) found in {html_file.name}: {dead_matches}"
+        )
 
 
 def test_audit_log_chain_intact_after_all_security_tests(app):
