@@ -257,3 +257,262 @@ def test_revoke_deletes_row_and_subsequent_access_fails(client, app):
             require_recipient(doc)
         assert exc_info.value.code == 404
 
+
+def test_sharing_with_self_and_unknown_user_graceful(client, app):
+    """Test sharing with self and unknown user are handled gracefully."""
+    password = "SecurePassword123!"
+    alice = register_user(client, app, "alice", "alice@example.com", password)
+
+    login_user(client, "alice", password)
+    client.post(
+        "/documents/upload",
+        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        content_type="multipart/form-data",
+    )
+
+    with app.app_context():
+        doc = db.session.execute(
+            db.select(Document).filter_by(original_filename="doc.pdf")
+        ).scalar_one()
+
+    res = client.post(
+        f"/documents/{doc.id}/share",
+        data={"recipients": "alice, non_existent_user@example.com"},
+        follow_redirects=True,
+    )
+    assert res.status_code == 200
+    assert b"cannot share with self" in res.data
+    assert b"not found" in res.data
+
+    with app.app_context():
+        keys = (
+            db.session.execute(
+                db.select(DocumentKey).filter_by(document_id=doc.id)
+            )
+            .scalars()
+            .all()
+        )
+        assert len(keys) == 1
+        assert keys[0].recipient_id == alice.id
+
+
+def test_owner_cannot_be_revoked(client, app):
+    """Test document owner cannot revoke their own access."""
+    from app.documents import revoke_document_access
+
+    password = "SecurePassword123!"
+    alice = register_user(client, app, "alice", "alice@example.com", password)
+
+    login_user(client, "alice", password)
+    client.post(
+        "/documents/upload",
+        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        content_type="multipart/form-data",
+    )
+
+    with app.app_context():
+        doc = db.session.execute(
+            db.select(Document).filter_by(original_filename="doc.pdf")
+        ).scalar_one()
+
+    res = client.post(
+        f"/documents/{doc.id}/revoke/{alice.id}", follow_redirects=True
+    )
+    assert res.status_code == 200
+    assert b"cannot revoke your own access" in res.data
+
+    with app.app_context():
+        owner_key = db.session.execute(
+            db.select(DocumentKey).filter_by(
+                document_id=doc.id, recipient_id=alice.id
+            )
+        ).scalar_one_or_none()
+        assert owner_key is not None
+
+        # Direct function call must also raise ValueError
+        with pytest.raises(ValueError, match="Cannot revoke the document owner's access"):
+            revoke_document_access(alice, doc, alice.id)
+
+
+def test_recipient_cannot_reshare_document(client, app):
+    """Test a recipient cannot re-share a document."""
+    password = "SecurePassword123!"
+    alice = register_user(client, app, "alice", "alice@example.com", password)
+    bob = register_user(client, app, "bob", "bob@example.com", password)
+    carol = register_user(client, app, "carol", "carol@example.com", password)
+
+    login_user(client, "alice", password)
+    client.post(
+        "/documents/upload",
+        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        content_type="multipart/form-data",
+    )
+
+    with app.app_context():
+        doc = db.session.execute(
+            db.select(Document).filter_by(original_filename="doc.pdf")
+        ).scalar_one()
+
+    client.post(f"/documents/{doc.id}/share", data={"recipients": "bob"})
+
+    client.post("/auth/logout", follow_redirects=True)
+    login_user(client, "bob", password)
+
+    res = client.post(f"/documents/{doc.id}/share", data={"recipients": "carol"})
+    assert res.status_code == 404
+
+    with app.app_context():
+        denied_log = db.session.execute(
+            db.select(AuditLog).filter_by(
+                action="ACCESS_DENIED",
+                actor_username="bob",
+                document_id=doc.id,
+            )
+        ).scalars().first()
+        assert denied_log is not None
+
+        carol_key = db.session.execute(
+            db.select(DocumentKey).filter_by(
+                document_id=doc.id, recipient_id=carol.id
+            )
+        ).scalar_one_or_none()
+        assert carol_key is None
+
+
+def test_shared_with_me_list(client, app):
+    """Test shared-with-me list only shows documents shared with the user."""
+    password = "SecurePassword123!"
+    alice = register_user(client, app, "alice", "alice@example.com", password)
+    bob = register_user(client, app, "bob", "bob@example.com", password)
+    carol = register_user(client, app, "carol", "carol@example.com", password)
+
+    login_user(client, "alice", password)
+    client.post(
+        "/documents/upload",
+        data={"document": (io.BytesIO(b"Data"), "shared_file.pdf")},
+        content_type="multipart/form-data",
+    )
+
+    with app.app_context():
+        doc = db.session.execute(
+            db.select(Document).filter_by(original_filename="shared_file.pdf")
+        ).scalar_one()
+
+    client.post(f"/documents/{doc.id}/share", data={"recipients": "bob"})
+    client.post("/auth/logout", follow_redirects=True)
+
+    # Bob's view
+    login_user(client, "bob", password)
+    res_bob = client.get("/documents")
+    assert res_bob.status_code == 200
+    assert b"shared_file.pdf" in res_bob.data
+    assert b"alice" in res_bob.data
+    assert f"/documents/{doc.id}/manage".encode() not in res_bob.data
+    client.post("/auth/logout", follow_redirects=True)
+
+    # Carol's view
+    login_user(client, "carol", password)
+    res_carol = client.get("/documents")
+    assert res_carol.status_code == 200
+    assert b"shared_file.pdf" not in res_carol.data
+
+
+def test_transaction_rollback_on_wrapping_failure(client, app, monkeypatch):
+    """Test transaction rollback: if wrapping fails for one recipient, no rows are saved."""
+    import app.documents as app_documents
+
+    password = "SecurePassword123!"
+    alice = register_user(client, app, "alice", "alice@example.com", password)
+    bob = register_user(client, app, "bob", "bob@example.com", password)
+    carol = register_user(client, app, "carol", "carol@example.com", password)
+
+    login_user(client, "alice", password)
+    client.post(
+        "/documents/upload",
+        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        content_type="multipart/form-data",
+    )
+
+    with app.app_context():
+        doc = db.session.execute(
+            db.select(Document).filter_by(original_filename="doc.pdf")
+        ).scalar_one()
+
+    real_wrap = app_documents.wrap_key
+    call_count = [0]
+
+    def failing_wrap(pubkey, deckey):
+        call_count[0] += 1
+        if call_count[0] > 1:
+            raise RuntimeError("Simulated key wrapping failure on second recipient")
+        return real_wrap(pubkey, deckey)
+
+    monkeypatch.setattr(app_documents, "wrap_key", failing_wrap)
+
+    res = client.post(
+        f"/documents/{doc.id}/share",
+        data={"recipients": "bob, carol"},
+        follow_redirects=True,
+    )
+    assert res.status_code == 200
+    assert b"error occurred while sharing" in res.data
+
+    with app.app_context():
+        keys = (
+            db.session.execute(
+                db.select(DocumentKey).filter_by(document_id=doc.id)
+            )
+            .scalars()
+            .all()
+        )
+        assert len(keys) == 1
+        assert keys[0].recipient_id == alice.id
+
+
+def test_share_and_revoke_audit_events_recorded(client, app):
+    """Test that SHARE and REVOKE audit log events are recorded with proper fields."""
+    password = "SecurePassword123!"
+    alice = register_user(client, app, "alice", "alice@example.com", password)
+    bob = register_user(client, app, "bob", "bob@example.com", password)
+
+    login_user(client, "alice", password)
+    client.post(
+        "/documents/upload",
+        data={"document": (io.BytesIO(b"Data"), "audit_doc.pdf")},
+        content_type="multipart/form-data",
+    )
+
+    with app.app_context():
+        doc = db.session.execute(
+            db.select(Document).filter_by(original_filename="audit_doc.pdf")
+        ).scalar_one()
+
+    client.post(f"/documents/{doc.id}/share", data={"recipients": "bob"})
+
+    with app.app_context():
+        share_log = db.session.execute(
+            db.select(AuditLog).filter_by(
+                action="SHARE",
+                actor_id=alice.id,
+                document_id=doc.id,
+                target_user_id=bob.id,
+            )
+        ).scalar_one_or_none()
+        assert share_log is not None
+        assert share_log.actor_username == "alice"
+
+    client.post(f"/documents/{doc.id}/revoke/{bob.id}", follow_redirects=True)
+
+    with app.app_context():
+        revoke_log = db.session.execute(
+            db.select(AuditLog).filter_by(
+                action="REVOKE",
+                actor_id=alice.id,
+                document_id=doc.id,
+                target_user_id=bob.id,
+            )
+        ).scalar_one_or_none()
+        assert revoke_log is not None
+        assert revoke_log.actor_username == "alice"
+
+

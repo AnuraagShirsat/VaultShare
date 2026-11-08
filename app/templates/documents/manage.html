@@ -60,6 +60,7 @@
                                 <th scope="col" class="ps-4">User</th>
                                 <th scope="col">Role</th>
                                 <th scope="col">Granted (UTC)</th>
+                                <th scope="col">Granted By</th>
                                 <th scope="col">Decrypts</th>
                                 <th scope="col">Last Decrypted</th>
                                 <th scope="col" class="text-end pe-4">Action</th>
@@ -82,6 +83,9 @@
                                         {% endif %}
                                     </td>
                                     <td class="text-muted small">{{ key.granted_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                    <td class="text-muted small">
+                                        {{ key.granted_by.username if key.granted_by else ('Self' if key.recipient_id == doc.owner_id else 'System') }}
+                                    </td>
                                     <td class="small">{{ key.decrypt_count }}</td>
                                     <td class="text-muted small">
                                         {{ key.last_decrypted_at.strftime('%Y-%m-%d %H:%M') if key.last_decrypted_at else 'Never' }}

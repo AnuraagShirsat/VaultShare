@@ -15,6 +15,10 @@ VaultShare is a secure document distribution web application built with Python, 
   Upon successful login, the server unlocks the private key into a server-side in-memory cache keyed by a random session token.
   *Known limitation*: Because decryption and cryptographic wrapping happen server-side, this architecture is end-to-rest rather than true client-side end-to-end encryption. Additionally, the in-memory key cache is single-process and lost upon application restarts.
 
+- **Access Revocation Limitation**:
+  Revoking recipient access deletes the recipient's RSA-wrapped key (`DocumentKey` record) from the database, preventing any future key unwrapping or server-side document decryption through VaultShare.
+  *Known limitation*: Revocation takes effect immediately for all subsequent VaultShare operations, but it cannot retroactively un-share, recall, or delete copies of documents that a recipient previously downloaded to their local machine.
+
 ---
 
 ## Tech Stack

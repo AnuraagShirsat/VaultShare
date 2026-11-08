@@ -491,7 +491,9 @@ def share(doc_id: int):
                 "Your session key has expired. Please log in again to share documents.",
                 "warning",
             )
-            return redirect(url_for("auth.login", next=request.path))
+            return redirect(
+                url_for("auth.login", next=url_for("documents.manage", doc_id=doc.id))
+            )
 
         try:
             summary = share_document(
@@ -503,7 +505,7 @@ def share(doc_id: int):
 
             parts = []
             if summary["shared"]:
-                parts.append(f"Shared with: {', '.join(summary['shared'])}.")
+                parts.append(f"Shared with {', '.join(summary['shared'])}.")
             skipped_msgs = []
             if summary["skipped_existing"]:
                 skipped_msgs.append(
@@ -515,11 +517,11 @@ def share(doc_id: int):
                 )
             if summary["skipped_not_found"]:
                 skipped_msgs.append(
-                    f"{', '.join(summary['skipped_not_found'])} (user not found)"
+                    f"{', '.join(summary['skipped_not_found'])} (not found)"
                 )
 
             if skipped_msgs:
-                parts.append(f"Skipped: {'; '.join(skipped_msgs)}.")
+                parts.append(f"Skipped: {', '.join(skipped_msgs)}.")
 
             msg = " ".join(parts) if parts else "No recipients processed."
             category = "success" if summary["shared"] else "info"
