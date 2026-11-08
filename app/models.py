@@ -14,6 +14,7 @@ from sqlalchemy import (
     DDL,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -216,6 +217,13 @@ class AuditLog(db.Model):
     entry_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
 
     actor: Mapped[Optional["User"]] = relationship("User", foreign_keys=[actor_id])
+
+    __table_args__ = (
+        Index("ix_audit_logs_document_id", "document_id"),
+        Index("ix_audit_logs_actor_id", "actor_id"),
+        Index("ix_audit_logs_target_user_id", "target_user_id"),
+        Index("ix_audit_logs_timestamp", "timestamp"),
+    )
 
     def __repr__(self) -> str:
         return (

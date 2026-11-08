@@ -46,9 +46,20 @@
                                         </code>
                                     </td>
                                     <td class="text-end pe-4">
-                                        <a href="{{ url_for('documents.manage', doc_id=doc.id) }}" class="btn btn-outline-primary btn-sm">
-                                            <i class="bi bi-people-fill me-1"></i>Manage Access
-                                        </a>
+                                        <div class="btn-group btn-group-sm">
+                                            <form action="{{ url_for('documents.download', doc_id=doc.id) }}" method="POST" class="d-inline">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <button type="submit" class="btn btn-outline-success btn-sm" title="Decrypt & Download">
+                                                    <i class="bi bi-download"></i>
+                                                </button>
+                                            </form>
+                                            <a href="{{ url_for('documents.manage', doc_id=doc.id) }}" class="btn btn-outline-primary btn-sm ms-1" title="Manage Access">
+                                                <i class="bi bi-people-fill me-1"></i>Manage
+                                            </a>
+                                            <a href="{{ url_for('documents.document_activity', doc_id=doc.id) }}" class="btn btn-outline-secondary btn-sm ms-1" title="History">
+                                                <i class="bi bi-clock-history me-1"></i>History
+                                            </a>
+                                        </div>
                                     </td>
                                 </tr>
                             {% endfor %}
@@ -104,9 +115,17 @@
                                         </code>
                                     </td>
                                     <td class="text-end pe-4">
-                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">
-                                            <i class="bi bi-check2-circle me-1"></i>Access Granted
-                                        </span>
+                                        <div class="btn-group btn-group-sm">
+                                            <form action="{{ url_for('documents.download', doc_id=key.document.id) }}" method="POST" class="d-inline">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <button type="submit" class="btn btn-outline-success btn-sm" title="Decrypt & Download">
+                                                    <i class="bi bi-download me-1"></i>Download
+                                                </button>
+                                            </form>
+                                            <a href="{{ url_for('documents.document_activity', doc_id=key.document.id) }}" class="btn btn-outline-secondary btn-sm ms-1" title="History">
+                                                <i class="bi bi-clock-history me-1"></i>History
+                                            </a>
+                                        </div>
                                     </td>
                                 </tr>
                             {% endfor %}

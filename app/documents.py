@@ -10,6 +10,8 @@ However, it cannot retroactively purge or un-share copies the user previously
 downloaded to their local device.
 """
 
+from datetime import datetime, timezone
+import io
 from pathlib import Path
 import secrets
 from typing import List, Optional
@@ -20,6 +22,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     session,
     url_for,
 )
@@ -30,6 +33,9 @@ from app import db, limiter
 from app.access import get_document_or_404, require_owner, require_recipient
 from app.audit import log_event
 from app.crypto import (
+    DecryptionError,
+    constant_time_equal,
+    decrypt_bytes,
     encrypt_bytes,
     generate_document_key,
     sha256_hex,
@@ -38,7 +44,7 @@ from app.crypto import (
 )
 from app.forms import DocumentUploadForm, ShareDocumentForm
 from app.keycache import get_key
-from app.models import Document, DocumentKey, User
+from app.models import AuditLog, Document, DocumentKey, User
 
 bp = Blueprint("documents", __name__, url_prefix="/documents")
 documents_bp = bp
@@ -562,3 +568,207 @@ def revoke(doc_id: int, user_id: int):
         flash(str(err), "warning")
 
     return redirect(url_for("documents.manage", doc_id=doc.id))
+
+
+def decrypt_document_for_user(
+    user: User,
+    doc: Document,
+    private_key: Optional[object] = None,
+) -> bytes:
+    """Decrypt a document for an authorized recipient and record access metrics.
+
+    Runs validation checks in order:
+    1. Key row lookup
+    2. Private key unwrapping of document key
+    3. Storage file presence and path safety
+    4. Ciphertext SHA-256 verification
+    5. AES-256-GCM authentication and decryption
+    6. Plaintext SHA-256 verification
+
+    On any integrity failure, logs INTEGRITY_FAILURE and raises DecryptionError.
+    On success, increments decrypt_count, updates last_decrypted_at, and logs DECRYPT.
+
+    Args:
+        user: Authorized User requesting decryption.
+        doc: Document instance to decrypt.
+        private_key: Optional decrypted RSA private key object.
+
+    Returns:
+        bytes: Decrypted plaintext contents.
+
+    Raises:
+        DecryptionError: If any integrity or cryptographic check fails.
+    """
+    key_row = db.session.execute(
+        db.select(DocumentKey).filter_by(
+            document_id=doc.id, recipient_id=user.id
+        )
+    ).scalar_one_or_none()
+
+    if key_row is None:
+        raise DecryptionError("User is not an authorized recipient.")
+
+    # 1. Retrieve unlocked private key
+    priv_key = private_key
+    if priv_key is None and session:
+        token = session.get("key_token")
+        priv_key = get_key(token, user.id)
+
+    if priv_key is None:
+        raise DecryptionError("Session key unavailable. Please log in again.")
+
+    # 2. Unwrap document key
+    doc_key = None
+    try:
+        doc_key = unwrap_key(priv_key, key_row.wrapped_key)
+    except Exception as exc:
+        log_event(
+            action="INTEGRITY_FAILURE",
+            actor=user,
+            document_id=doc.id,
+            details={"reason": "key_unwrap_failed"},
+        )
+        raise DecryptionError("Document key unwrap failed.") from exc
+
+    # 3. File presence
+    storage_dir = Path(current_app.config["STORAGE_DIR"]).resolve()
+    file_path = (storage_dir / doc.stored_filename).resolve()
+
+    if not file_path.is_relative_to(storage_dir) or not file_path.is_file():
+        log_event(
+            action="INTEGRITY_FAILURE",
+            actor=user,
+            document_id=doc.id,
+            details={"reason": "file_missing"},
+        )
+        del doc_key
+        raise DecryptionError("Stored document file is missing.")
+
+    # 4. Ciphertext hash
+    ciphertext = file_path.read_bytes()
+    if not constant_time_equal(sha256_hex(ciphertext), doc.ciphertext_sha256 or ""):
+        log_event(
+            action="INTEGRITY_FAILURE",
+            actor=user,
+            document_id=doc.id,
+            details={"reason": "ciphertext_hash_mismatch"},
+        )
+        del doc_key
+        raise DecryptionError("Ciphertext hash mismatch.")
+
+    # 5. AES-GCM decryption
+    plaintext = None
+    try:
+        plaintext = decrypt_bytes(doc_key, doc.nonce or b"", ciphertext)
+    except Exception as exc:
+        log_event(
+            action="INTEGRITY_FAILURE",
+            actor=user,
+            document_id=doc.id,
+            details={"reason": "gcm_auth_failed"},
+        )
+        del doc_key
+        raise DecryptionError("AES-GCM authentication failed.") from exc
+    finally:
+        del doc_key
+
+    # 6. Plaintext hash
+    if not constant_time_equal(sha256_hex(plaintext), doc.plaintext_sha256 or ""):
+        log_event(
+            action="INTEGRITY_FAILURE",
+            actor=user,
+            document_id=doc.id,
+            details={"reason": "plaintext_hash_mismatch"},
+        )
+        del plaintext
+        raise DecryptionError("Plaintext hash mismatch.")
+
+    # 7. Success: update metrics & log DECRYPT
+    key_row.decrypt_count += 1
+    key_row.last_decrypted_at = datetime.now(timezone.utc)
+    log_event(
+        action="DECRYPT",
+        actor=user,
+        document_id=doc.id,
+        details={
+            "original_filename": doc.original_filename,
+            "size_bytes": doc.size_bytes,
+        },
+    )
+    db.session.commit()
+    return plaintext
+
+
+@bp.route("/<int:doc_id>/download", methods=["POST"])
+@login_required
+@limiter.limit("30 per minute")
+def download(doc_id: int):
+    """Decrypt and download an authorized document."""
+    doc = get_document_or_404(doc_id)
+    require_recipient(doc, action="DOWNLOAD")
+
+    user = current_user._get_current_object()
+    try:
+        plaintext = decrypt_document_for_user(user, doc)
+        return send_file(
+            io.BytesIO(plaintext),
+            as_attachment=True,
+            download_name=doc.original_filename,
+            mimetype=doc.mime_type or "application/octet-stream",
+        )
+    except DecryptionError as exc:
+        flash(f"Decryption failed: {exc}", "danger")
+        return redirect(url_for("documents.index"))
+    except Exception:
+        flash("An error occurred during document download.", "danger")
+        return redirect(url_for("documents.index"))
+
+
+@bp.route("/<int:doc_id>/activity", methods=["GET"])
+@login_required
+def document_activity(doc_id: int):
+    """View activity history for a specific document."""
+    doc = get_document_or_404(doc_id)
+    require_recipient(doc, action="VIEW_ACTIVITY")
+
+    from app.activity import describe_event, visible_events_query
+
+    user = current_user._get_current_object()
+    query = (
+        visible_events_query(user)
+        .filter(AuditLog.document_id == doc.id)
+        .order_by(AuditLog.id.desc())
+    )
+
+    page = request.args.get("page", 1, type=int)
+    if page < 1:
+        page = 1
+
+    per_page = 25
+    total = db.session.execute(
+        db.select(db.func.count()).select_from(query.subquery())
+    ).scalar_one()
+
+    events = (
+        db.session.execute(
+            query.limit(per_page).offset((page - 1) * per_page)
+        )
+        .scalars()
+        .all()
+    )
+
+    doc_cache = {doc.id: doc.original_filename}
+    described_events = [
+        describe_event(e, user, doc_cache=doc_cache) for e in events
+    ]
+
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    return render_template(
+        "activity/document_activity.html",
+        doc=doc,
+        events=described_events,
+        page=page,
+        total_pages=total_pages,
+        total=total,
+    )
