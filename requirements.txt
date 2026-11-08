@@ -16,6 +16,7 @@ limits==5.8.0
 MarkupSafe==3.0.4
 ordered-set==4.1.0
 packaging==26.3
+pip-audit==2.10.1
 pluggy==1.7.0
 pycparser==3.12
 Pygments==2.21.0

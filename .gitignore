@@ -1,4 +1,3 @@
-
 # VaultShare
 .env
 instance/
@@ -7,3 +6,8 @@ storage/*
 !storage/.gitkeep
 venv/
 .venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+logs/
+*.log
