@@ -35,7 +35,7 @@ def fast_rsa_keygen(monkeypatch):
 @pytest.fixture
 def logged_in_user(client, app):
     """Register and log in a test user, returning the user and client."""
-    password = "AliceSecurePass123!"
+    password = "SecurePassword123!"
     client.post(
         "/auth/register",
         data={
@@ -132,7 +132,7 @@ def test_file_on_disk_is_encrypted_and_hash_matches(logged_in_user, app):
 def test_owner_can_unwrap_and_decrypt_uploaded_document(logged_in_user, app):
     """Test that owner's wrapped key and private key decrypt the stored file back to plaintext."""
     user, client, _ = logged_in_user
-    original_data = b"Exact plaintext verification buffer for AES-GCM and RSA-OAEP."
+    original_data = b"PK\x03\x04Exact plaintext verification buffer for AES-GCM and RSA-OAEP."
 
     client.post(
         "/documents/upload",

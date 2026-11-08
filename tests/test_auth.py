@@ -140,8 +140,8 @@ def test_login_success_and_key_cached(client, app):
         data={
             "username": "bob",
             "email": "bob@example.com",
-            "password": "BobSecurePassword123!",
-            "confirm_password": "BobSecurePassword123!",
+            "password": "SecretBetaPassword123!",
+            "confirm_password": "SecretBetaPassword123!",
         },
     )
 
@@ -150,12 +150,12 @@ def test_login_success_and_key_cached(client, app):
         "/auth/login",
         data={
             "username": "bob",
-            "password": "BobSecurePassword123!",
+            "password": "SecretBetaPassword123!",
         },
         follow_redirects=True,
     )
     assert response.status_code == 200
-    assert b"Welcome, bob" in response.data
+    assert b"Welcome, bob" in response.data or b"Welcome back, bob" in response.data
 
     with client.session_transaction() as sess:
         token = sess.get("key_token")
@@ -183,8 +183,8 @@ def test_login_failure_generic_error(client, app):
         data={
             "username": "charlie",
             "email": "charlie@example.com",
-            "password": "CharliePassword123!",
-            "confirm_password": "CharliePassword123!",
+            "password": "SecretGammaPass123!",
+            "confirm_password": "SecretGammaPass123!",
         },
     )
 
@@ -238,13 +238,13 @@ def test_logout_clears_session_and_drops_cached_key(client, app):
         data={
             "username": "dave",
             "email": "dave@example.com",
-            "password": "DavePassword123!",
-            "confirm_password": "DavePassword123!",
+            "password": "SecretDeltaPass123!",
+            "confirm_password": "SecretDeltaPass123!",
         },
     )
     client.post(
         "/auth/login",
-        data={"username": "dave", "password": "DavePassword123!"},
+        data={"username": "dave", "password": "SecretDeltaPass123!"},
     )
 
     with client.session_transaction() as sess:
@@ -281,15 +281,15 @@ def test_open_redirect_ignored(client):
         data={
             "username": "eve",
             "email": "eve@example.com",
-            "password": "EvePassword123!",
-            "confirm_password": "EvePassword123!",
+            "password": "SecretEpsilonPass123!",
+            "confirm_password": "SecretEpsilonPass123!",
         },
     )
 
     # Attempt redirect to external site
     res = client.post(
         "/auth/login?next=https://evil.com",
-        data={"username": "eve", "password": "EvePassword123!"},
+        data={"username": "eve", "password": "SecretEpsilonPass123!"},
     )
     assert res.status_code == 302
     assert res.headers["Location"].endswith("/dashboard")
@@ -339,13 +339,13 @@ def test_expired_cached_key_forces_relogin(client, app):
         data={
             "username": "grace",
             "email": "grace@example.com",
-            "password": "GracePassword123!",
-            "confirm_password": "GracePassword123!",
+            "password": "SecretZetaPass123!",
+            "confirm_password": "SecretZetaPass123!",
         },
     )
     client.post(
         "/auth/login",
-        data={"username": "grace", "password": "GracePassword123!"},
+        data={"username": "grace", "password": "SecretZetaPass123!"},
     )
 
     # Simulate key cache eviction / restart

@@ -1,0 +1,28 @@
+/* VaultShare application stylesheet */
+
+/* Common table column widths replacing inline styles */
+.w-col-15 {
+    width: 15%;
+}
+
+.w-col-20 {
+    width: 20%;
+}
+
+.w-col-25 {
+    width: 25%;
+}
+
+.w-col-40 {
+    width: 40%;
+}
+
+.w-col-50 {
+    width: 50%;
+}
+
+/* Integrity status circular icon badges */
+.icon-circle-lg {
+    width: 52px;
+    height: 52px;
+}

@@ -16,6 +16,7 @@ from app.models import AuditLog, Document, DocumentKey, User
 ALLOWED_ACTIONS = [
     "ALL",
     "UPLOAD",
+    "UPLOAD_REJECTED",
     "SHARE",
     "REVOKE",
     "DECRYPT",
@@ -25,6 +26,7 @@ ALLOWED_ACTIONS = [
     "LOGIN",
     "LOGOUT",
     "LOGIN_FAILED",
+    "LOGIN_LOCKED",
     "REGISTER",
     "ACTIVITY_EXPORT",
 ]
@@ -240,6 +242,18 @@ def describe_event(
         icon = "bi-exclamation-octagon-fill"
         user_tried = entry.actor_username or "unknown user"
         title = f"Failed login attempt for {user_tried}"
+
+    elif action == "LOGIN_LOCKED":
+        badge_color = "danger"
+        icon = "bi-lock-fill"
+        user_tried = entry.actor_username or "unknown user"
+        title = f"Account temporarily locked due to excessive failed logins for {user_tried}"
+
+    elif action == "UPLOAD_REJECTED":
+        badge_color = "danger"
+        icon = "bi-shield-x"
+        reason = details_data.get("reason", "security_policy")
+        title = f"{actor_name} attempted upload rejected ({reason})"
 
     elif action == "REGISTER":
         badge_color = "secondary"

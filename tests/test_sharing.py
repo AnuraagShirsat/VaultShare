@@ -71,7 +71,7 @@ def test_multi_recipient_sharing_and_decryption(client, app):
     carol = register_user(client, app, "carol", "carol@example.com", password)
 
     login_user(client, "alice", password)
-    payload = b"Top Secret Document Content for Multi-Recipient Test"
+    payload = b"%PDF-1.4\nTop Secret Document Content for Multi-Recipient Test"
     client.post(
         "/documents/upload",
         data={"document": (io.BytesIO(payload), "secret.pdf")},
@@ -139,7 +139,7 @@ def test_non_owner_access_denied_and_logged(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "file.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "file.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -178,7 +178,7 @@ def test_user_without_access_gets_404(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Secret"), "private.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nSecret"), "private.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -203,7 +203,7 @@ def test_duplicate_share_no_duplicate_row(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "doc.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -233,7 +233,7 @@ def test_revoke_deletes_row_and_subsequent_access_fails(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "doc.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -266,7 +266,7 @@ def test_sharing_with_self_and_unknown_user_graceful(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "doc.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -306,7 +306,7 @@ def test_owner_cannot_be_revoked(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "doc.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -344,7 +344,7 @@ def test_recipient_cannot_reshare_document(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "doc.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -389,7 +389,7 @@ def test_shared_with_me_list(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "shared_file.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "shared_file.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -429,7 +429,7 @@ def test_transaction_rollback_on_wrapping_failure(client, app, monkeypatch):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "doc.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "doc.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -478,7 +478,7 @@ def test_share_and_revoke_audit_events_recorded(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "audit_doc.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "audit_doc.pdf")},
         content_type="multipart/form-data",
     )
 

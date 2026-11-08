@@ -238,7 +238,7 @@ def test_chain_verifies_after_realistic_flow(client, app):
 
     login_user(client, "alice", password)
 
-    payload = b"Top secret report content"
+    payload = b"%PDF-1.4\nTop secret report content"
     client.post(
         "/documents/upload",
         data={"document": (io.BytesIO(payload), "report.pdf")},
@@ -284,7 +284,7 @@ def test_no_key_material_in_audit_details(client, app):
 
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Private file"), "safe.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nPrivate file"), "safe.pdf")},
         content_type="multipart/form-data",
     )
 

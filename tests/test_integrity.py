@@ -61,6 +61,8 @@ def login_user(client, username, password="SecurePassword123!"):
 
 def upload_document(client, app, filename="secret.pdf", content=b"Sensitive document content"):
     """Helper to upload an encrypted document."""
+    if filename.endswith(".pdf") and not content.startswith(b"%PDF"):
+        content = b"%PDF-1.4\n" + content
     client.post(
         "/documents/upload",
         data={"document": (io.BytesIO(content), filename)},
@@ -348,7 +350,7 @@ def test_check_file_matching_and_mismatch(client, app):
     bob = register_user(client, app, "bob", "bob@example.com", password)
 
     login_user(client, "alice", password)
-    original_bytes = b"Exact original downloaded document bytes"
+    original_bytes = b"%PDF-1.4\nExact original downloaded document bytes"
     doc = upload_document(client, app, "local_check.pdf", original_bytes)
 
     # 1. Exact match upload

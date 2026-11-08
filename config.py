@@ -42,6 +42,9 @@ class Config:
     MAX_CONTENT_LENGTH = int(
         os.environ.get("MAX_CONTENT_LENGTH", 16 * 1024 * 1024)
     )
+    STORAGE_QUOTA_BYTES = int(
+        os.environ.get("STORAGE_QUOTA_BYTES", 100 * 1024 * 1024)
+    )
     ALLOWED_EXTENSIONS = set(
         ext.strip().lower()
         for ext in os.environ.get(
@@ -56,6 +59,9 @@ class Config:
         "RATELIMIT_DEFAULT", "200 per day;50 per hour"
     )
     RATELIMIT_STORAGE_URI = "memory://"
+
+    # Reverse proxy support
+    TRUSTED_PROXY_COUNT = os.environ.get("TRUSTED_PROXY_COUNT")
 
 
 class DevelopmentConfig(Config):
@@ -74,12 +80,47 @@ class TestingConfig(Config):
     RATELIMIT_ENABLED = False
 
 
-class ProductionConfig(Config):
+class ProductionConfigMeta(type):
+    """Metaclass for ProductionConfig to enforce SECRET_KEY validation on attribute access."""
+
+    KNOWN_PLACEHOLDERS = {
+        "dev-insecure-secret-key-change-in-production",
+        "change-me",
+        "changeme",
+        "secret",
+        "secret-key",
+        "your-secret-key-here",
+        "default",
+    }
+
+    @property
+    def SECRET_KEY(cls) -> str:
+        """Enforce strict production SECRET_KEY rules from environment variables."""
+        key = os.environ.get("SECRET_KEY", "").strip()
+        if not key:
+            raise ValueError(
+                "SECRET_KEY must be set in the environment for production."
+            )
+        if len(key) < 32:
+            raise ValueError(
+                "Production SECRET_KEY must be at least 32 characters long."
+            )
+        if key.lower() in cls.KNOWN_PLACEHOLDERS:
+            raise ValueError(
+                "Production SECRET_KEY cannot be a known insecure placeholder."
+            )
+        return key
+
+
+class ProductionConfig(Config, metaclass=ProductionConfigMeta):
     """Production environment configuration."""
 
     DEBUG = False
     TESTING = False
-    SECRET_KEY = os.environ.get("SECRET_KEY")
+    SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    PREFERRED_URL_SCHEME = "https"
 
 
 config_by_name = {

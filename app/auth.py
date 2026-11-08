@@ -9,6 +9,7 @@ encrypted with a key derived from their password (via scrypt). Password reset
 is intentionally omitted to maintain the zero-knowledge security guarantee.
 """
 
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 from flask import (
     Blueprint,
@@ -20,6 +21,8 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required, login_user, logout_user
+from sqlalchemy import func
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from app import db, limiter
 from app.audit import log_event
@@ -31,10 +34,15 @@ from app.crypto import (
 )
 from app.forms import LoginForm, RegistrationForm
 from app.keycache import drop_key, get_key, store_key
-from app.models import User
+from app.models import AuditLog, User
 
 bp = Blueprint("auth", __name__, url_prefix="/auth")
 auth_bp = bp
+
+# Precomputed dummy password hash for timing attack mitigation
+DUMMY_PASSWORD_HASH = generate_password_hash("dummy-vaultshare-timing-defense-password")
+LOCKOUT_THRESHOLD = 5
+LOCKOUT_WINDOW = timedelta(minutes=15)
 
 
 def is_safe_url(target: str) -> bool:
@@ -79,6 +87,10 @@ def verify_unlocked_key_session():
 
 
 @bp.route("/register", methods=["GET", "POST"])
+@limiter.limit(
+    "5 per hour",
+    error_message="Too many registration attempts. Please try again later.",
+)
 def register():
     """Register a new user account with generated RSA-3072 keypair."""
     if current_user.is_authenticated:
@@ -142,10 +154,54 @@ def login():
             db.select(User).filter_by(username=username)
         ).scalar_one_or_none()
 
-        # Generic authentication failure check to prevent user enumeration
         generic_error = "Invalid username or password."
 
-        if user is None or not user.check_password(password):
+        # User enumeration timing defense: simulate password check on non-existent account
+        if user is None:
+            check_password_hash(DUMMY_PASSWORD_HASH, password)
+            log_event(
+                action="LOGIN_FAILED",
+                actor=None,
+                details={"attempted_username": username},
+            )
+            flash(generic_error, "danger")
+            return render_template("auth/login.html", form=form), 401
+
+        # Per-account lockout check via audit logs
+        now = datetime.now(timezone.utc)
+        window_start = (now - LOCKOUT_WINDOW).replace(tzinfo=None)
+
+        failed_attempts = db.session.execute(
+            db.select(func.count(AuditLog.id)).filter(
+                AuditLog.action == "LOGIN_FAILED",
+                AuditLog.actor_id == user.id,
+                AuditLog.timestamp >= window_start,
+            )
+        ).scalar_one()
+
+        if failed_attempts >= LOCKOUT_THRESHOLD:
+            # Record LOGIN_LOCKED only once per lockout window
+            lock_logged = db.session.execute(
+                db.select(func.count(AuditLog.id)).filter(
+                    AuditLog.action == "LOGIN_LOCKED",
+                    AuditLog.actor_id == user.id,
+                    AuditLog.timestamp >= window_start,
+                )
+            ).scalar_one()
+            if lock_logged == 0:
+                log_event(
+                    action="LOGIN_LOCKED",
+                    actor=user,
+                    details={
+                        "attempted_username": username,
+                        "reason": "lockout_threshold_exceeded",
+                    },
+                )
+            flash(generic_error, "danger")
+            return render_template("auth/login.html", form=form), 401
+
+        # Verify password against hash
+        if not user.check_password(password):
             log_event(
                 action="LOGIN_FAILED",
                 actor=user,
@@ -173,6 +229,9 @@ def login():
             )
             flash(generic_error, "danger")
             return render_template("auth/login.html", form=form), 401
+
+        # Clear existing session data before setting new auth session (session fixation defense)
+        session.clear()
 
         # Cache unlocked private key on the server
         token = store_key(user.id, private_key)

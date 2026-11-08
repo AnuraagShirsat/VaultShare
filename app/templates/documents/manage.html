@@ -97,7 +97,7 @@
                                     </td>
                                     <td class="text-end pe-4">
                                         {% if key.recipient_id != doc.owner_id %}
-                                            <form action="{{ url_for('documents.revoke', doc_id=doc.id, user_id=key.recipient_id) }}" method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to revoke access for {{ key.recipient.username }}?');">
+                                            <form action="{{ url_for('documents.revoke', doc_id=doc.id, user_id=key.recipient_id) }}" method="POST" class="d-inline" data-confirm="Are you sure you want to revoke access for {{ key.recipient.username }}?">
                                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                                 <button type="submit" class="btn btn-outline-danger btn-sm">
                                                     <i class="bi bi-person-x-fill me-1"></i>Revoke
@@ -145,7 +145,7 @@
                         {% if other_users %}
                             <div class="mb-3">
                                 <label class="form-label fw-semibold small text-muted">Quick Add Registered User</label>
-                                <select class="form-select form-select-sm" id="userQuickSelect" onchange="addSelectedUser(this)">
+                                <select class="form-select form-select-sm" id="userQuickSelect">
                                     <option value="" selected>-- Select a user --</option>
                                     {% for u in other_users %}
                                         <option value="{{ u.username }}">{{ u.username }} ({{ u.email }})</option>
@@ -163,23 +163,4 @@
         </div>
     </div>
 </div>
-
-<script>
-function addSelectedUser(select) {
-    const val = select.value;
-    if (!val) return;
-    const input = document.getElementById('recipientsInput');
-    const current = input.value.trim();
-    if (!current) {
-        input.value = val;
-    } else {
-        const parts = current.split(',').map(s => s.trim()).filter(Boolean);
-        if (!parts.includes(val)) {
-            parts.push(val);
-            input.value = parts.join(', ');
-        }
-    }
-    select.value = '';
-}
-</script>
 {% endblock %}

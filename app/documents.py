@@ -12,6 +12,7 @@ downloaded to their local device.
 
 from datetime import datetime, timezone
 import io
+import os
 from pathlib import Path
 import secrets
 from typing import List, Optional
@@ -77,6 +78,37 @@ def is_allowed_extension(filename: str) -> bool:
     return ext in allowed
 
 
+def validate_file_content(filename: str, data: bytes) -> Optional[str]:
+    """Validate file content against claimed extension using magic bytes or text decoding.
+
+    Returns None if valid, or an error description string if validation fails.
+    """
+    if not filename or "." not in filename:
+        return "Missing file extension."
+
+    ext = filename.rsplit(".", 1)[1].lower()
+
+    if ext == "pdf":
+        if not data.startswith(b"%PDF"):
+            return "File header does not match PDF format (%PDF magic bytes missing)."
+    elif ext == "png":
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "File header does not match PNG format (PNG magic bytes missing)."
+    elif ext in ("jpg", "jpeg"):
+        if not data.startswith(b"\xff\xd8\xff"):
+            return "File header does not match JPEG format (JPEG SOI marker missing)."
+    elif ext in ("zip", "docx", "xlsx", "pptx"):
+        if not (data.startswith(b"PK\x03\x04") or data.startswith(b"PK\x05\x06")):
+            return f"File header does not match {ext.upper()} archive format (PK zip header missing)."
+    elif ext in ("txt", "csv", "md"):
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"File content is not valid UTF-8 text for .{ext} file."
+
+    return None
+
+
 def store_encrypted_document(
     owner: User,
     filename: str,
@@ -125,34 +157,45 @@ def store_encrypted_document(
     if not file_path.is_relative_to(storage_dir):
         raise ValueError("Path traversal attempt detected.")
 
-    file_path.write_bytes(ciphertext)
+    # Atomic file write: write to temp file, set permissions, then replace
+    temp_filename = f".tmp_{secrets.token_hex(16)}"
+    temp_path = storage_dir / temp_filename
 
-    # 7. Wrap document key for the owner using their RSA public key
-    wrapped_key = wrap_key(owner.public_key_pem, doc_key)
-    # Clear raw document key from local memory
-    del doc_key
-
-    # 8. Create Document and initial DocumentKey records
-    doc = Document(
-        owner_id=owner.id,
-        original_filename=display_filename,
-        stored_filename=stored_filename,
-        mime_type=mime_type or "application/octet-stream",
-        size_bytes=len(data),
-        nonce=nonce,
-        plaintext_sha256=plaintext_sha256,
-        ciphertext_sha256=ciphertext_sha256,
-    )
-
-    owner_key = DocumentKey(
-        document=doc,
-        recipient=owner,
-        wrapped_key=wrapped_key,
-        granted_by=owner,
-    )
-
-    # 9 & 10. Persist in a single transaction; delete file if commit fails
     try:
+        temp_path.write_bytes(ciphertext)
+
+        try:
+            os.chmod(temp_path, 0o600)
+        except OSError:
+            pass
+
+        os.replace(temp_path, file_path)
+
+        # 7. Wrap document key for the owner using their RSA public key
+        wrapped_key = wrap_key(owner.public_key_pem, doc_key)
+        # Clear raw document key from local memory
+        del doc_key
+
+        # 8. Create Document and initial DocumentKey records
+        doc = Document(
+            owner_id=owner.id,
+            original_filename=display_filename,
+            stored_filename=stored_filename,
+            mime_type=mime_type or "application/octet-stream",
+            size_bytes=len(data),
+            nonce=nonce,
+            plaintext_sha256=plaintext_sha256,
+            ciphertext_sha256=ciphertext_sha256,
+        )
+
+        owner_key = DocumentKey(
+            document=doc,
+            recipient=owner,
+            wrapped_key=wrapped_key,
+            granted_by=owner,
+        )
+
+        # 9 & 10. Persist in a single transaction; delete file if commit fails
         db.session.add(doc)
         db.session.add(owner_key)
         db.session.flush()
@@ -171,6 +214,11 @@ def store_encrypted_document(
         db.session.commit()
     except Exception:
         db.session.rollback()
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
         if file_path.exists():
             try:
                 file_path.unlink()
@@ -415,6 +463,43 @@ def upload():
         if len(file_bytes) > max_length:
             flash("File exceeds maximum allowed size (16 MB).", "danger")
             return render_template("documents/upload.html", form=form), 413
+
+        # Validate magic bytes / UTF-8
+        magic_error = validate_file_content(filename, file_bytes)
+        if magic_error:
+            log_event(
+                action="UPLOAD_REJECTED",
+                actor=current_user,
+                details={
+                    "reason": "magic_bytes_mismatch",
+                    "filename": secure_filename(filename) or "unnamed",
+                    "detail": magic_error,
+                },
+            )
+            flash(f"Invalid file content: {magic_error}", "danger")
+            return render_template("documents/upload.html", form=form), 400
+
+        # Check per-user storage quota
+        quota = current_app.config.get("STORAGE_QUOTA_BYTES", 100 * 1024 * 1024)
+        from sqlalchemy import func
+
+        current_used = db.session.execute(
+            db.select(func.coalesce(func.sum(Document.size_bytes), 0)).filter_by(
+                owner_id=current_user.id
+            )
+        ).scalar_one()
+
+        if current_used + len(file_bytes) > quota:
+            log_event(
+                action="UPLOAD_REJECTED",
+                actor=current_user,
+                details={
+                    "reason": "quota_exceeded",
+                    "filename": secure_filename(filename) or "unnamed",
+                },
+            )
+            flash("Upload rejected: storage quota exceeded.", "danger")
+            return render_template("documents/upload.html", form=form), 400
 
         user = current_user._get_current_object()
         doc = store_encrypted_document(

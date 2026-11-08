@@ -59,6 +59,8 @@ def login_user(client, username, password="SecurePassword123!"):
 
 def upload_document(client, app, filename="doc.pdf", content=b"Test file content"):
     """Helper to upload a document."""
+    if filename.endswith(".pdf") and not content.startswith(b"%PDF"):
+        content = b"%PDF-1.4\n" + content
     client.post(
         "/documents/upload",
         data={"document": (io.BytesIO(content), filename)},

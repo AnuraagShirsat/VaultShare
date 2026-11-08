@@ -89,12 +89,12 @@ def test_dashboard_stat_cards_and_decrypt_count(client, app):
     login_user(client, "alice", password)
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Doc 1"), "doc1.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nDoc 1"), "doc1.pdf")},
         content_type="multipart/form-data",
     )
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Doc 2"), "doc2.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nDoc 2"), "doc2.pdf")},
         content_type="multipart/form-data",
     )
 
@@ -148,7 +148,7 @@ def test_quick_action_buttons_render(client, app):
 
     client.post(
         "/documents/upload",
-        data={"document": (io.BytesIO(b"Data"), "quick_actions.pdf")},
+        data={"document": (io.BytesIO(b"%PDF-1.4\nData"), "quick_actions.pdf")},
         content_type="multipart/form-data",
     )
 
