@@ -31,9 +31,14 @@ class Config:
     REMEMBER_COOKIE_SAMESITE = "Lax"
 
     # Database configuration (default to SQLite in instance/ directory)
-    DATABASE_URI = os.environ.get(
-        "DATABASE_URI"
-    ) or f"sqlite:///{(BASE_DIR / 'instance' / 'vaultshare.db').as_posix()}"
+    DATABASE_PATH = os.environ.get(
+        "DATABASE_PATH", str(BASE_DIR / "instance" / "vaultshare.db")
+    )
+    DATABASE_URI = os.environ.get("DATABASE_URI") or (
+        f"sqlite:///{Path(DATABASE_PATH).as_posix()}"
+        if Path(DATABASE_PATH).is_absolute()
+        else f"sqlite:///{(BASE_DIR / DATABASE_PATH).as_posix()}"
+    )
     SQLALCHEMY_DATABASE_URI = DATABASE_URI
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
@@ -117,7 +122,9 @@ class ProductionConfig(Config, metaclass=ProductionConfigMeta):
 
     DEBUG = False
     TESTING = False
-    SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = (
+        os.environ.get("SESSION_COOKIE_SECURE", "True").lower() in ("true", "1")
+    )
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     PREFERRED_URL_SCHEME = "https"

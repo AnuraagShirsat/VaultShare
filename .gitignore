@@ -2,6 +2,7 @@
 .env
 instance/
 *.db
+storage/
 storage/*
 !storage/.gitkeep
 venv/

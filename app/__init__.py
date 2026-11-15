@@ -7,8 +7,10 @@ registers CLI commands, and registers component blueprints.
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+from pathlib import Path
 import re
 import sqlite3
+from typing import Optional
 import click
 from flask import Flask, flash, redirect, render_template, request, url_for
 from flask_sqlalchemy import SQLAlchemy
@@ -90,8 +92,6 @@ def perform_reset_db(app: Flask) -> int:
     Returns:
         int: Number of .enc files removed from STORAGE_DIR.
     """
-    from pathlib import Path
-
     db.session.remove()
     db.drop_all()
 
@@ -131,7 +131,6 @@ def seed_demo_data(app: Flask, demo_password: Optional[str] = None) -> dict:
     Returns:
         dict: Seeding summary with created users, documents, and verify_chain result.
     """
-    import sys
     from werkzeug.exceptions import HTTPException
     from flask_login import login_user
 
@@ -331,6 +330,12 @@ def register_commands(app: Flask):
     def init_db_command():
         """Initialize the database and create all tables."""
         os.makedirs(app.instance_path, exist_ok=True)
+        db_uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+        if db_uri and db_uri.startswith("sqlite:///") and ":memory:" not in db_uri:
+            Path(db_uri.replace("sqlite:///", "", 1)).parent.mkdir(parents=True, exist_ok=True)
+        elif app.config.get("DATABASE_PATH"):
+            Path(app.config["DATABASE_PATH"]).parent.mkdir(parents=True, exist_ok=True)
+
         storage_dir = app.config.get("STORAGE_DIR")
         if storage_dir:
             os.makedirs(storage_dir, exist_ok=True)
@@ -338,6 +343,12 @@ def register_commands(app: Flask):
         from app import models  # noqa: F401
 
         db.create_all()
+
+        # Ensure SQLite immutability triggers exist (idempotent)
+        with db.engine.begin() as conn:
+            conn.execute(models._audit_logs_no_update_ddl)
+            conn.execute(models._audit_logs_no_delete_ddl)
+
         click.echo("Initialized the database.")
 
     @app.cli.command("reset-db")
@@ -486,8 +497,15 @@ def create_app(config_class=None, test_config=None):
             config_by_name.get(env_config, config_by_name["default"])
         )
 
-    # Ensure instance and storage folders exist
+    # Ensure database parent folder, instance, and storage folders exist
     os.makedirs(app.instance_path, exist_ok=True)
+    db_uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    if db_uri and db_uri.startswith("sqlite:///") and ":memory:" not in db_uri:
+        sqlite_file_path = db_uri.replace("sqlite:///", "", 1)
+        Path(sqlite_file_path).parent.mkdir(parents=True, exist_ok=True)
+    elif app.config.get("DATABASE_PATH"):
+        Path(app.config["DATABASE_PATH"]).parent.mkdir(parents=True, exist_ok=True)
+
     storage_dir = app.config.get("STORAGE_DIR")
     if storage_dir:
         os.makedirs(storage_dir, exist_ok=True)
@@ -520,23 +538,33 @@ def create_app(config_class=None, test_config=None):
     file_handler.setLevel(logging.INFO)
     app.logger.addHandler(file_handler)
 
-    # Configure reverse proxy support if TRUSTED_PROXY_COUNT is set
-    proxy_count = app.config.get("TRUSTED_PROXY_COUNT")
-    if proxy_count:
-        try:
-            p_count = int(proxy_count)
-            if p_count > 0:
-                from werkzeug.middleware.proxy_fix import ProxyFix
+    # Configure reverse proxy support: on production apply ProxyFix(1, 1, 1)
+    if os.environ.get("FLASK_CONFIG") == "production":
+        from werkzeug.middleware.proxy_fix import ProxyFix
 
-                app.wsgi_app = ProxyFix(
-                    app.wsgi_app,
-                    x_for=p_count,
-                    x_proto=p_count,
-                    x_host=p_count,
-                    x_prefix=p_count,
-                )
-        except ValueError:
-            pass
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=1,
+            x_proto=1,
+            x_host=1,
+        )
+    else:
+        proxy_count = app.config.get("TRUSTED_PROXY_COUNT")
+        if proxy_count:
+            try:
+                p_count = int(proxy_count)
+                if p_count > 0:
+                    from werkzeug.middleware.proxy_fix import ProxyFix
+
+                    app.wsgi_app = ProxyFix(
+                        app.wsgi_app,
+                        x_for=p_count,
+                        x_proto=p_count,
+                        x_host=p_count,
+                        x_prefix=p_count,
+                    )
+            except ValueError:
+                pass
 
     # Initialize extensions with app
     db.init_app(app)
