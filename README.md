@@ -107,63 +107,83 @@ sequenceDiagram
 
 ---
 
-## Setup & Installation on Windows (PowerShell)
+## Deployment
+
+The application can be deployed to Render with the provided `render.yaml`. A **single-worker Gunicorn** process is required because the unlocked private-key cache lives in one process's memory; additional workers would not share the cache and could break decryption.
+
+---
+
+## Run Locally (optional)
+
+The live demo above needs no setup. Use these steps only if you want to run your own copy or the tests.
+
+<details>
+<summary>Show setup steps</summary>
 
 ### 1. Prerequisites
+
 - Python 3.13 installed and accessible from PowerShell.
 
 ### 2. Create and Activate Virtual Environment
+
 ```powershell
 py -3.13 -m venv venv
 .\venv\Scripts\Activate.ps1
 ```
 
 ### 3. Install Dependencies
+
 ```powershell
 pip install -r requirements.txt
 ```
 
 ### 4. Configure Environment Variables
-Copy `.env.example` to `.env` and **ensure `SECRET_KEY` is defined** (production requires it; the app will refuse to start without a value).
+
+Copy `.env.example` to `.env`:
 ```powershell
 Copy-Item .env.example .env
 ```
-Edit the file, e.g.:
+Generate a secure `SECRET_KEY` (do not copy the placeholder value from `.env.example`):
+```powershell
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+Paste the output into `.env` alongside the other required values:
 ```ini
-SECRET_KEY="replace-with-a-strong-random-32-character-secret"
+SECRET_KEY="paste-the-generated-hex-string-here"
 FLASK_APP="wsgi.py"
 FLASK_CONFIG="development"
 STORAGE_DIR="storage"
 ```
+Production requires `SECRET_KEY` to be set - the app will refuse to start without it.
 
 ### 5. Initialize the Database (safe to run on every startup)
+
 ```powershell
 flask --app wsgi init-db
 ```
 
 ### 6. Run the Application (development server)
+
 ```powershell
 flask --app wsgi run
 ```
 Open <http://127.0.0.1:5000> in your browser.
 
 ### 7. Run the Tests
+
 ```powershell
 python -m pytest -v
 ```
 
-To see ciphertext tamper-detection in action, `tamper_demo.py` flips a single byte in a `.enc` storage file and prints instructions to run the integrity check in the browser, where the ciphertext-hash stage will fail:
+To see ciphertext tamper-detection in action, first register an account and upload at least one document so that a `.enc` file exists in the `storage/` folder. Then run:
 ```powershell
 python scripts/tamper_demo.py
 ```
+The script flips a single byte in a `.enc` file and prints instructions to run the integrity check in the browser, where the ciphertext-hash stage will report a failure.
 
-*macOS / Linux:* replace `.\venv\Scripts\Activate.ps1` with `source venv/bin/activate`.
+*macOS / Linux:* use `python3 -m venv venv` and `source venv/bin/activate` instead of the `py` and `Activate.ps1` commands, and `cp .env.example .env` instead of `Copy-Item`.
 
----
-
-## Deployment
-
-The application can be deployed to Render with the provided `render.yaml`. A **single-worker Gunicorn** process is required because the unlocked private-key cache lives in one process's memory; additional workers would not share the cache and could break decryption.
+</details>
 
 ---
 
